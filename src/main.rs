@@ -16,7 +16,7 @@ static SUBJECTS: phf::Map<&'static str, &'static str> = phf_map! {
     "Biology" => "BIOL",
     "Business" => "BUSI",
     "Chemistry" => "CHEM",
-    "Communication" => "COMM",
+    "Communications" => "COMM",
     "Computer Science" => "CSCI",
     "Criminology and Justice" => "CRMN",
     "Curriculum Studies" => "CURS",
@@ -76,10 +76,26 @@ struct Class {
     class_type: String,
 }
 
+enum Browser {
+    Chromium,
+    Firefox,
+}
+
 fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
-    let file = File::open(filename)
-        .unwrap_or_else(|e| panic!("Couldn't open data file: {}", e.to_string()));
+    let file = File::open(filename).unwrap_or_else(|e| panic!("Couldn't open data file: {}", e));
     let mut lines = BufReader::new(file).lines().map(|l| l.unwrap());
+
+    // determine what browser was used to generate the data file
+    let browser = loop {
+        let next = lines
+            .next()
+            .expect("Failed to find Schedule line to determine browser");
+        match &*next {
+            "Schedule" => break Browser::Chromium,
+            "    Schedule" => break Browser::Firefox,
+            _ => (),
+        }
+    };
 
     // skip unneeded prelude
     while !lines
@@ -90,7 +106,7 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
 
     let mut output = Vec::new();
     let course_name_re = Regex::new(r"^(.+?) \| (.+?) (\d+U)").unwrap();
-    let date_re = Regex::new(r"^([\d/]+) -- ([\d/]+)").unwrap();
+    let date_re = Regex::new(r"^([\d/]+) -- ([\d/]+)(?:\s+(\w+))?").unwrap();
     let time_re = Regex::new(
         r"^\s+(\d+:\d+ \w+) - (\d+:\d+ \w+).+?Location: (?P<location>.+?) Building: (?P<building>.+?) Room: (?P<room>.+)",
     )
@@ -126,23 +142,33 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
             };
 
             let start_date = date_caps.get(1).unwrap().as_str();
-            let start_date =
-                NaiveDate::parse_from_str(start_date, "%m/%d/%Y").unwrap_or_else(|e| {
-                    panic!("Failed to parse date: {}\n{}", start_date, e.to_string())
-                });
+            let start_date = NaiveDate::parse_from_str(start_date, "%m/%d/%Y")
+                .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", start_date, e));
 
             let end_date = date_caps.get(2).unwrap().as_str();
-            let end_date = NaiveDate::parse_from_str(end_date, "%m/%d/%Y").unwrap_or_else(|e| {
-                panic!("Failed to parse date: {}\n{}", end_date, e.to_string())
-            });
+            let end_date = NaiveDate::parse_from_str(end_date, "%m/%d/%Y")
+                .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", end_date, e));
 
-            let weekday = lines.next().unwrap();
+            let weekday = match browser {
+                Browser::Firefox => lines.next().unwrap(),
+                Browser::Chromium => date_caps.get(3).unwrap().as_str().to_string(),
+            };
+            if weekday == "None" {
+                lines.nth(match browser {
+                    Browser::Chromium => 7,
+                    Browser::Firefox => 9,
+                });
+                continue;
+            }
             let weekday = weekday
                 .parse::<Weekday>()
                 .unwrap_or_else(|_| panic!("Failed to parse weekday: {}", weekday));
 
             // skip day abbreviations
-            lines.nth(8);
+            lines.nth(match browser {
+                Browser::Chromium => 6,
+                Browser::Firefox => 8,
+            });
 
             let time_line = lines.next().unwrap();
             let time_caps = time_re
@@ -150,15 +176,12 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
                 .unwrap_or_else(|| panic!("Failed to parse time line: {}", time_line));
 
             let start_time = time_caps.get(1).unwrap().as_str();
-            let start_time =
-                NaiveTime::parse_from_str(start_time, "%I:%M %p").unwrap_or_else(|e| {
-                    panic!("Failed to parse time: {}\n{}", start_time, e.to_string())
-                });
+            let start_time = NaiveTime::parse_from_str(start_time, "%I:%M %p")
+                .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", start_time, e));
 
             let end_time = time_caps.get(2).unwrap().as_str();
-            let end_time = NaiveTime::parse_from_str(end_time, "%I:%M %p").unwrap_or_else(|e| {
-                panic!("Failed to parse time: {}\n{}", end_time, e.to_string())
-            });
+            let end_time = NaiveTime::parse_from_str(end_time, "%I:%M %p")
+                .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", end_time, e));
 
             let location = format!(
                 "{} - {} - {}",
@@ -202,8 +225,7 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
 }
 
 fn parse_exdate(filename: impl AsRef<Path>) -> Vec<NaiveDate> {
-    let file = File::open(filename)
-        .unwrap_or_else(|e| panic!("Couldn't open data file: {}", e.to_string()));
+    let file = File::open(filename).unwrap_or_else(|e| panic!("Couldn't open data file: {}", e));
     BufReader::new(file)
         .lines()
         .map(|l| {
@@ -212,13 +234,15 @@ fn parse_exdate(filename: impl AsRef<Path>) -> Vec<NaiveDate> {
                 .split_once(" - ")
                 .unwrap_or_else(|| panic!("Failed to parse exdate line: {}", l));
 
-            let start_date = split.0.parse::<NaiveDate>().unwrap_or_else(|e| {
-                panic!("Failed to parse exdate: {}\n{}", split.0, e.to_string())
-            });
+            let start_date = split
+                .0
+                .parse::<NaiveDate>()
+                .unwrap_or_else(|e| panic!("Failed to parse exdate: {}\n{}", split.0, e));
 
-            let end_date = split.1.parse::<NaiveDate>().unwrap_or_else(|e| {
-                panic!("Failed to parse exdate: {}\n{}", split.1, e.to_string())
-            });
+            let end_date = split
+                .1
+                .parse::<NaiveDate>()
+                .unwrap_or_else(|e| panic!("Failed to parse exdate: {}\n{}", split.1, e));
 
             let mut dates = Vec::new();
             for date in start_date.iter_days() {
@@ -299,10 +323,10 @@ fn main() {
         for date_range in &class.date_ranges {
             let first_date = date_range.start_date
                 + Duration::days(
-                    (date_range.weekday.num_days_from_sunday()
-                        - date_range.start_date.weekday().num_days_from_sunday())
-                    .rem_euclid(7)
-                    .into(),
+                    (date_range.weekday.num_days_from_sunday() as i32
+                        - date_range.start_date.weekday().num_days_from_sunday() as i32)
+                        .rem_euclid(7)
+                        .into(),
                 );
             let exdate = format!(
                 "EXDATE;TZID=America/Toronto:{}",
