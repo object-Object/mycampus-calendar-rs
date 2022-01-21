@@ -22,4 +22,4 @@ If the program doesn't create any `.ics` files, something probably went wrong. O
 mycampus-calendar-rs-x86_64-pc-windows-gnu
 pause
 ```
-The error message might be pretty clear (eg. missing permissions, file not found, etc), in which case it's an issue with your setup and you can probably fix it pretty easily. If the error is something along the lines of `thread 'main' panicked at 'Failed to parse message line: ...`, you probably forgot to click all of the arrows beside the course names so they're pointing down. Otherwise, the parsing probably broke, so open an issue.
+The error message might be pretty clear (eg. missing permissions, file not found, etc), in which case it's an issue with your setup and you can probably fix it pretty easily. If the error starts with `thread 'main' panicked at 'Failed to parse message line: ...`, you probably forgot to click all of the arrows beside the course names so they're pointing down. Otherwise, the parsing probably broke, so open an issue.
