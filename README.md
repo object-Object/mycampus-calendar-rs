@@ -1,6 +1,6 @@
 # mycampus-calendar-rs
 
-This is a small program to parse student schedules from MyCampus into `.ics` files, which can be imported into any calendar app (eg. Google Calendar, Outlook, Apple Calendar). This is working as of Winter 2022. **Currently only works on Firefox.**
+This is a small program to parse student schedules from MyCampus into `.ics` files, which can be imported into any calendar app (eg. Google Calendar, Outlook, Apple Calendar). This is working as of Winter 2022. Works in Firefox and (probably) any Chromium-based browser.
 
 ## Installation
 
