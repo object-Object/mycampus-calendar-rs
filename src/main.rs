@@ -65,6 +65,8 @@ struct DateRange {
     end_time: NaiveTime,
     weekday: Weekday,
     location: String,
+    building: String,
+    room: String,
 }
 
 #[derive(Debug)]
@@ -184,12 +186,9 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
             let end_time = NaiveTime::parse_from_str(end_time, "%I:%M %p")
                 .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", end_time, e));
 
-            let location = format!(
-                "{} - {} - {}",
-                time_caps.name("location").unwrap().as_str(),
-                time_caps.name("building").unwrap().as_str(),
-                time_caps.name("room").unwrap().as_str(),
-            );
+            let location = time_caps.name("location").unwrap().as_str().to_string();
+            let building = time_caps.name("building").unwrap().as_str().to_string();
+            let room = time_caps.name("room").unwrap().as_str().to_string();
 
             date_ranges.push(DateRange {
                 start_date,
@@ -198,6 +197,8 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
                 end_time,
                 weekday,
                 location,
+                building,
+                room,
             });
         };
 
@@ -350,8 +351,8 @@ fn main() {
                     RRULE:FREQ=WEEKLY;TZID=America/Toronto;UNTIL={until}
                     {exdate}
                     SUMMARY:{name}
-                    DESCRIPTION:{code}\n{crn}\n{instructor}
-                    LOCATION:{location}
+                    DESCRIPTION:Campus: {location}\nCode: {code}\n{crn}\n{instructor}
+                    LOCATION:{building} - {room}
                     END:VEVENT
                 "#},
                 dtstamp = Utc::now().format("%Y%m%dT%H%M%SZ"),
@@ -367,7 +368,9 @@ fn main() {
                 code = class.code,
                 crn = class.crn,
                 instructor = class.instructor,
-                location = date_range.location
+                location = date_range.location,
+                building = date_range.building,
+                room = date_range.room,
             )
             .ok();
         }
