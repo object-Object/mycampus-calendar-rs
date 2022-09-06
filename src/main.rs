@@ -4,6 +4,7 @@ use phf::phf_map;
 use regex::Regex;
 use std::{
     collections::HashMap,
+    fmt::Write,
     fs,
     fs::File,
     io::{prelude::*, BufReader},
@@ -228,7 +229,7 @@ fn parse_exdate(filename: impl AsRef<Path>) -> Vec<NaiveDate> {
     let file = File::open(filename).unwrap_or_else(|e| panic!("Couldn't open data file: {}", e));
     BufReader::new(file)
         .lines()
-        .map(|l| {
+        .flat_map(|l| {
             let l = l.unwrap();
             let split = l
                 .split_once(" - ")
@@ -253,7 +254,6 @@ fn parse_exdate(filename: impl AsRef<Path>) -> Vec<NaiveDate> {
             }
             dates
         })
-        .flatten()
         .collect()
 }
 
@@ -339,42 +339,44 @@ fn main() {
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            calendar.push_str(&format!(
+            write!(
+                calendar,
                 indoc! {r#"
                     BEGIN:VEVENT
-                    DTSTAMP:{}
-                    UID:{}
-                    DTSTART;{}
-                    DTEND;{}
-                    RRULE:FREQ=WEEKLY;TZID=America/Toronto;UNTIL={}
-                    {}
-                    SUMMARY:{} - {}
-                    DESCRIPTION:{}\n{}
-                    LOCATION:{}
+                    DTSTAMP:{dtstamp}
+                    UID:{uid}
+                    DTSTART;{dtstart}
+                    DTEND;{dtend}
+                    RRULE:FREQ=WEEKLY;TZID=America/Toronto;UNTIL={until}
+                    {exdate}
+                    SUMMARY:{name}
+                    DESCRIPTION:{code}\n{crn}\n{instructor}
+                    LOCATION:{location}
                     END:VEVENT
                 "#},
-                Utc::now().format("%Y%m%dT%H%M%SZ"),
-                Uuid::new_v4(),
-                tzid(first_date.and_time(date_range.start_time)),
-                tzid(first_date.and_time(date_range.end_time)),
-                date_range
+                dtstamp = Utc::now().format("%Y%m%dT%H%M%SZ"),
+                uid = Uuid::new_v4(),
+                dtstart = tzid(first_date.and_time(date_range.start_time)),
+                dtend = tzid(first_date.and_time(date_range.end_time)),
+                until = date_range
                     .end_date
                     .and_hms(23, 59, 59)
                     .format("%Y%m%dT%H%M%S"),
-                exdate,
-                class.code,
-                class.name,
-                class.crn,
-                class.instructor,
-                date_range.location
-            ));
+                exdate = exdate,
+                name = class.name,
+                code = class.code,
+                crn = class.crn,
+                instructor = class.instructor,
+                location = date_range.location
+            )
+            .ok();
         }
     }
 
     for (name, calendar) in &mut calendars {
         calendar.push_str("END:VCALENDAR");
         fold_calendar(calendar);
-        *calendar = calendar.replace("\n", "\r\n");
+        *calendar = calendar.replace('\n', "\r\n");
         fs::write(format!("{}.ics", name), calendar).ok();
     }
 
