@@ -3,7 +3,7 @@ use indoc::indoc;
 use phf::phf_map;
 use regex::Regex;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::Write,
     fs,
     fs::File,
@@ -86,7 +86,10 @@ enum Browser {
 
 fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
     let file = File::open(filename).unwrap_or_else(|e| panic!("Couldn't open data file: {}", e));
-    let mut lines = BufReader::new(file).lines().map(|l| l.unwrap());
+    // wHY ARE THEY USING NO-BREAK SPACES NOW
+    let mut lines = BufReader::new(file)
+        .lines()
+        .map(|l| l.unwrap().replace('\u{a0}', " "));
 
     // determine what browser was used to generate the data file
     let browser = loop {
@@ -117,6 +120,11 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
     let message_re = Regex::new(r"\| Schedule Type: (?P<class_type>.+?) \|").unwrap();
 
     while let Some(course_name_line) = lines.next() {
+        // handle extra newlines at the end
+        if course_name_line.is_empty() {
+            break;
+        }
+
         // parse course name and code
         let course_name_caps = course_name_re
             .captures(&course_name_line)
@@ -134,6 +142,13 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
 
         // skip "Registered" line
         lines.next();
+
+        // why did they CHANGE THE FORMAT
+        // JUST TO MOVE THIS BOX TO THE TOP
+        let message_line = lines.next().unwrap();
+        let message_caps = message_re
+            .captures(&message_line)
+            .unwrap_or_else(|| panic!("Failed to parse message line: {}", message_line));
 
         // parse date ranges
         let mut date_ranges = Vec::new();
@@ -203,11 +218,6 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
         };
 
         let crn = lines.next().unwrap();
-
-        let message_line = lines.next().unwrap();
-        let message_caps = message_re
-            .captures(&message_line)
-            .unwrap_or_else(|| panic!("Failed to parse message line: {}", message_line));
 
         output.push(Class {
             name,
@@ -288,6 +298,7 @@ fn main() {
     println!("Data: {:#?}\nExcluded dates: {:?}", data, exdate);
 
     let mut calendars = HashMap::new();
+    let mut summary: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
 
     for class in &data {
         let calendar = calendars
@@ -321,6 +332,12 @@ fn main() {
                 "}
                 .to_string()
             });
+        let class_summary_count = summary
+            .entry(class.name.clone())
+            .or_default()
+            .entry(class.class_type.clone())
+            .or_default();
+
         for date_range in &class.date_ranges {
             let first_date = date_range.start_date
                 + Duration::days(
@@ -340,6 +357,7 @@ fn main() {
                     .collect::<Vec<_>>()
                     .join(",")
             );
+
             write!(
                 calendar,
                 indoc! {r#"
@@ -373,6 +391,8 @@ fn main() {
                 room = date_range.room,
             )
             .ok();
+
+            *class_summary_count += 1;
         }
     }
 
@@ -383,5 +403,19 @@ fn main() {
         fs::write(format!("{}.ics", name), calendar).ok();
     }
 
+    let max_name_len = summary.keys().map(|n| n.len()).max().unwrap();
+    for (name, class_summary) in summary {
+        println!(
+            "{:indent$}{} → {}",
+            "",
+            name,
+            class_summary
+                .iter()
+                .map(|(class_type, count)| format!("{}: {}", class_type, count))
+                .collect::<Vec<String>>()
+                .join(", "),
+            indent = max_name_len - name.len()
+        );
+    }
     println!("Wrote .ics file(s).");
 }
