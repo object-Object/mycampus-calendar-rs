@@ -45,3 +45,4 @@ jobs:
         with:
           name: build-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.bin }}
+          if-no-files-found: error
