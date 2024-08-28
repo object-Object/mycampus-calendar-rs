@@ -85,7 +85,8 @@ enum Browser {
 }
 
 fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
-    let file = File::open(filename).unwrap_or_else(|e| panic!("Couldn't open data file: {}", e));
+    let file =
+        File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
     // wHY ARE THEY USING NO-BREAK SPACES NOW
     let mut lines = BufReader::new(file)
         .lines()
@@ -237,7 +238,8 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
 }
 
 fn parse_exdate(filename: impl AsRef<Path>) -> Vec<NaiveDate> {
-    let file = File::open(filename).unwrap_or_else(|e| panic!("Couldn't open data file: {}", e));
+    let file =
+        File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
     BufReader::new(file)
         .lines()
         .flat_map(|l| {
