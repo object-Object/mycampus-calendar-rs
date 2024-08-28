@@ -9,27 +9,36 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - name: linux-x86_64
+            os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            bin: mycampus-calendar-rs
+            bin-suffix:
 
-          - os: ubuntu-latest
+          - name: linux-arm64
+            os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            bin: mycampus-calendar-rs
+            bin-suffix:
 
-          - os: windows-latest
+          - name: windows-x86_64
+            os: windows-latest
             target: x86_64-pc-windows-msvc
-            bin: mycampus-calendar-rs.exe
+            bin-suffix: .exe
 
-          - os: macos-latest
+          - name: macos-x86_64
+            os: macos-latest
             target: x86_64-apple-darwin
-            bin: mycampus-calendar-rs
+            bin-suffix:
 
-          - os: macos-latest
+          - name: macos-arm64
+            os: macos-latest
             target: aarch64-apple-darwin
-            bin: mycampus-calendar-rs
+            bin-suffix:
 
     runs-on: ${{ matrix.os }}
+    env:
+      BIN: mycampus-calendar-rs${{ matrix.bin-suffix }}
+      OUT: mycampus-calendar-rs-${{ matrix.name }}${{ matrix.bin-suffix }}
+
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -40,9 +49,12 @@ jobs:
           target: ${{ matrix.target }}
           args: --locked --release
 
+      - name: Rename executable
+        run: cp target/${{ matrix.target }}/release/${{ env.BIN }} ${{ env.OUT }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/${{ matrix.bin }}
+          name: build-${{ matrix.name }}
+          path: ${{ env.OUT }}
           if-no-files-found: error
