@@ -8,7 +8,6 @@ use std::{
     fs,
     fs::File,
     io::{prelude::*, BufReader},
-    path::Path,
 };
 use uuid::Uuid;
 
@@ -84,7 +83,7 @@ enum Browser {
     Firefox,
 }
 
-fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
+fn parse_data(filename: &str) -> Vec<Class> {
     let file =
         File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
     // wHY ARE THEY USING NO-BREAK SPACES NOW
@@ -237,7 +236,7 @@ fn parse_data(filename: impl AsRef<Path>) -> Vec<Class> {
     output
 }
 
-fn parse_exdate(filename: impl AsRef<Path>) -> Vec<NaiveDate> {
+fn parse_exdate(filename: &str) -> Vec<NaiveDate> {
     let file =
         File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
     BufReader::new(file)
