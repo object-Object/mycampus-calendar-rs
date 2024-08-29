@@ -1,422 +1,108 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc, Weekday};
-use indoc::indoc;
-use phf::phf_map;
-use regex::Regex;
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt::Write,
-    fs,
-    fs::File,
-    io::{prelude::*, BufReader},
-};
-use uuid::Uuid;
+mod parser;
 
-static SUBJECTS: phf::Map<&'static str, &'static str> = phf_map! {
-    "Academic Learning and Success" => "ALSU",
-    "Biology" => "BIOL",
-    "Business" => "BUSI",
-    "Chemistry" => "CHEM",
-    "Communications" => "COMM",
-    "Computer Science" => "CSCI",
-    "Criminology and Justice" => "CRMN",
-    "Curriculum Studies" => "CURS",
-    "Economics" => "ECON",
-    "Education" => "EDUC",
-    "Educational Studies and Digital Technology" => "AEDT",
-    "Electrical Engineering" => "ELEE",
-    "Energy Systems and Nuclear Science" => "ESNS",
-    "Engineering" => "ENGR",
-    "Environmental Science" => "ENVS",
-    "Forensic Science" => "FSCI",
-    "Health Science" => "HLSC",
-    "Indigenous" => "INDG",
-    "Information Technology" => "INFR",
-    "Integrated Mathematics and Computer Science" => "IMCS",
-    "Kinesiology" => "KINE",
-    "Legal Studies" => "LGLS",
-    "Liberal Studies" => "LBAT",
-    "Manufacturing Engineering" => "MANE",
-    "Mathematics" => "MATH",
-    "Mechanical Engineering" => "MECE",
-    "Mechatronics Engineering" => "METE",
-    "Medical Laboratory Science" => "MLSC",
-    "Neuroscience" => "NSCI",
-    "Nuclear" => "NUCL",
-    "Nursing" => "NURS",
-    "Physics" => "PHY",
-    "Political Science" => "POSC",
-    "Psychology" => "PSYC",
-    "Radiation Science" => "RADI",
-    "Science" => "SCIE",
-    "Science Co-op" => "SCCO",
-    "Social Science" => "SSCI",
-    "Sociology" => "SOCI",
-    "Software Engineering" => "SOFE",
-    "Statistics" => "STAT",
-    "Sustainable Energy Systems" => "ENSY",
-};
+use chrono::{Local, NaiveDate};
+use eframe::egui::{self, CentralPanel, ScrollArea, TextEdit, Widget};
+use egui_extras::DatePickerButton;
+use once_cell::sync::Lazy;
 
-#[derive(Debug)]
-struct DateRange {
-    start_date: NaiveDate,
-    end_date: NaiveDate,
-    start_time: NaiveTime,
-    end_time: NaiveTime,
-    weekday: Weekday,
-    location: String,
-    building: String,
-    room: String,
-}
+static DEFAULT_DATE: Lazy<NaiveDate> = Lazy::new(|| Local::now().date_naive());
 
-#[derive(Debug)]
-struct Class {
-    name: String,
-    code: String,
-    date_ranges: Vec<DateRange>,
-    instructor: String,
-    crn: String,
-    class_type: String,
-}
-
-enum Browser {
-    Chromium,
-    Firefox,
-}
-
-fn parse_data(filename: &str) -> Vec<Class> {
-    let file =
-        File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
-    // wHY ARE THEY USING NO-BREAK SPACES NOW
-    let mut lines = BufReader::new(file)
-        .lines()
-        .map(|l| l.unwrap().replace('\u{a0}', " "));
-
-    // determine what browser was used to generate the data file
-    let browser = loop {
-        let next = lines
-            .next()
-            .expect("Failed to find Schedule line to determine browser");
-        match &*next {
-            "Schedule" => break Browser::Chromium,
-            "    Schedule" => break Browser::Firefox,
-            _ => (),
-        }
-    };
-
-    // skip unneeded prelude
-    while !lines
-        .next()
-        .expect("Failed to find start of schedule")
-        .starts_with("Class Schedule for ")
-    {}
-
-    let mut output = Vec::new();
-    let course_name_re = Regex::new(r"^(.+?) \| (.+?) (\d+U)").unwrap();
-    let date_re = Regex::new(r"^([\d/]+) -- ([\d/]+)(?:\s+(\w+))?").unwrap();
-    let time_re = Regex::new(
-        r"^\s+(\d+:\d+ \w+) - (\d+:\d+ \w+).+?Location: (?P<location>.+?) Building: (?P<building>.+?) Room: (?P<room>.+)",
+fn main() -> eframe::Result {
+    eframe::run_native(
+        "mycampus-calendar-rs",
+        eframe::NativeOptions::default(),
+        Box::new(|_| Ok(Box::<App>::default())),
     )
-    .unwrap();
-    let message_re = Regex::new(r"\| Schedule Type: (?P<class_type>.+?) \|").unwrap();
+}
 
-    while let Some(course_name_line) = lines.next() {
-        // handle extra newlines at the end
-        if course_name_line.is_empty() {
-            break;
-        }
+#[derive(Default)]
+struct App {
+    data: String,
+    excluded_dates: Vec<ExcludedDate>,
+}
 
-        // parse course name and code
-        let course_name_caps = course_name_re
-            .captures(&course_name_line)
-            .unwrap_or_else(|| panic!("Failed to match course name line: {}", course_name_line));
-        let name = course_name_caps.get(1).unwrap().as_str().to_string();
-        let subject = course_name_caps.get(2).unwrap().as_str();
-        let code = format!(
-            "{} {}",
-            SUBJECTS.get(subject).unwrap_or_else(|| panic!(
-                "Failed to get short subject code for subject: {}",
-                subject
-            )),
-            course_name_caps.get(3).unwrap().as_str()
-        );
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered_justified(|ui| ui.heading("mycampus-calendar-rs"));
+            ui.separator();
 
-        // skip "Registered" line
-        lines.next();
+            ui.add_space(12.0);
+            ui.heading("MyOntarioTech Schedule Data");
 
-        // why did they CHANGE THE FORMAT
-        // JUST TO MOVE THIS BOX TO THE TOP
-        let message_line = lines.next().unwrap();
-        let message_caps = message_re
-            .captures(&message_line)
-            .unwrap_or_else(|| panic!("Failed to parse message line: {}", message_line));
-
-        // parse date ranges
-        let mut date_ranges = Vec::new();
-        let instructor = loop {
-            let date_line = lines.next().unwrap();
-            let date_caps = match date_re.captures(&date_line) {
-                Some(caps) => caps,
-                None => break date_line,
-            };
-
-            let start_date = date_caps.get(1).unwrap().as_str();
-            let start_date = NaiveDate::parse_from_str(start_date, "%m/%d/%Y")
-                .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", start_date, e));
-
-            let end_date = date_caps.get(2).unwrap().as_str();
-            let end_date = NaiveDate::parse_from_str(end_date, "%m/%d/%Y")
-                .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", end_date, e));
-
-            let weekday = match browser {
-                Browser::Firefox => lines.next().unwrap(),
-                Browser::Chromium => date_caps.get(3).unwrap().as_str().to_string(),
-            };
-            if weekday == "None" {
-                lines.nth(match browser {
-                    Browser::Chromium => 7,
-                    Browser::Firefox => 9,
+            ScrollArea::vertical()
+                .max_height(100.0)
+                .animated(false)
+                .show(ui, |ui| {
+                    ui.add_sized(
+                        ui.available_size(),
+                        TextEdit::multiline(&mut self.data)
+                            .hint_text("Paste the copied schedule data here."),
+                    )
                 });
-                continue;
-            }
-            let weekday = weekday
-                .parse::<Weekday>()
-                .unwrap_or_else(|_| panic!("Failed to parse weekday: {}", weekday));
 
-            // skip day abbreviations
-            lines.nth(match browser {
-                Browser::Chromium => 6,
-                Browser::Firefox => 8,
-            });
+            ui.add_space(12.0);
+            ui.heading("Excluded Dates");
 
-            let time_line = lines.next().unwrap();
-            let time_caps = time_re
-                .captures(&time_line)
-                .unwrap_or_else(|| panic!("Failed to parse time line: {}", time_line));
-
-            let start_time = time_caps.get(1).unwrap().as_str();
-            let start_time = NaiveTime::parse_from_str(start_time, "%I:%M %p")
-                .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", start_time, e));
-
-            let end_time = time_caps.get(2).unwrap().as_str();
-            let end_time = NaiveTime::parse_from_str(end_time, "%I:%M %p")
-                .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", end_time, e));
-
-            let location = time_caps.name("location").unwrap().as_str().to_string();
-            let building = time_caps.name("building").unwrap().as_str().to_string();
-            let room = time_caps.name("room").unwrap().as_str().to_string();
-
-            date_ranges.push(DateRange {
-                start_date,
-                end_date,
-                start_time,
-                end_time,
-                weekday,
-                location,
-                building,
-                room,
-            });
-        };
-
-        let crn = lines.next().unwrap();
-
-        output.push(Class {
-            name,
-            code,
-            date_ranges,
-            instructor,
-            crn,
-            class_type: message_caps
-                .name("class_type")
-                .unwrap()
-                .as_str()
-                .to_string(),
-        })
-    }
-
-    output
-}
-
-fn parse_exdate(filename: &str) -> Vec<NaiveDate> {
-    let file =
-        File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
-    BufReader::new(file)
-        .lines()
-        .flat_map(|l| {
-            let l = l.unwrap();
-            let split = l
-                .split_once(" - ")
-                .unwrap_or_else(|| panic!("Failed to parse exdate line: {}", l));
-
-            let start_date = split
-                .0
-                .parse::<NaiveDate>()
-                .unwrap_or_else(|e| panic!("Failed to parse exdate: {}\n{}", split.0, e));
-
-            let end_date = split
-                .1
-                .parse::<NaiveDate>()
-                .unwrap_or_else(|e| panic!("Failed to parse exdate: {}\n{}", split.1, e));
-
-            let mut dates = Vec::new();
-            for date in start_date.iter_days() {
-                dates.push(date);
-                if date == end_date {
-                    break;
+            ui.horizontal(|ui| {
+                if ui.button("➕ Single").clicked() {
+                    self.excluded_dates.push(ExcludedDate::single());
                 }
-            }
-            dates
-        })
-        .collect()
-}
 
-fn tzid(datetime: NaiveDateTime) -> String {
-    format!("TZID=America/Toronto:{}", datetime.format("%Y%m%dT%H%M%S"))
-}
-
-fn fold_calendar(calendar: &mut String) {
-    let mut to_insert = Vec::new();
-    let mut line_length = 0;
-    for (index, c) in calendar.chars().enumerate() {
-        if c == '\n' {
-            line_length = 0;
-        } else {
-            line_length += 1;
-            if line_length >= 74 {
-                to_insert.push(index);
-                line_length = 0;
-            }
-        }
-    }
-    for index in to_insert.iter().rev() {
-        calendar.insert_str(*index, "\n ");
-    }
-}
-
-fn main() {
-    let data = parse_data("data.txt");
-    let exdate = parse_exdate("exdate.txt");
-
-    println!("Data: {:#?}\nExcluded dates: {:?}", data, exdate);
-
-    let mut calendars = HashMap::new();
-    let mut summary: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
-
-    for class in &data {
-        let calendar = calendars
-            .entry(class.class_type.clone())
-            .or_insert_with(|| {
-                indoc! {"
-                    BEGIN:VCALENDAR
-                    VERSION:2.0
-                    PRODID:MYCAMPUS-CALENDAR-RS
-                    CALSCALE:GREGORIAN
-                    BEGIN:VTIMEZONE
-                    TZID:America/Toronto
-                    LAST-MODIFIED:20201011T015911Z
-                    TZURL:http://tzurl.org/zoneinfo-outlook/America/Toronto
-                    X-LIC-LOCATION:America/Toronto
-                    BEGIN:DAYLIGHT
-                    TZNAME:EDT
-                    TZOFFSETFROM:-0500
-                    TZOFFSETTO:-0400
-                    DTSTART:19700308T020000
-                    RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU
-                    END:DAYLIGHT
-                    BEGIN:STANDARD
-                    TZNAME:EST
-                    TZOFFSETFROM:-0400
-                    TZOFFSETTO:-0500
-                    DTSTART:19701101T020000
-                    RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU
-                    END:STANDARD
-                    END:VTIMEZONE
-                "}
-                .to_string()
+                if ui.button("➕ Range").clicked() {
+                    self.excluded_dates.push(ExcludedDate::range());
+                }
             });
-        let class_summary_count = summary
-            .entry(class.name.clone())
-            .or_default()
-            .entry(class.class_type.clone())
-            .or_default();
 
-        for date_range in &class.date_ranges {
-            let first_date = date_range.start_date
-                + Duration::days(
-                    (date_range.weekday.num_days_from_sunday() as i32
-                        - date_range.start_date.weekday().num_days_from_sunday() as i32)
-                        .rem_euclid(7)
-                        .into(),
-                );
-            let exdate = format!(
-                "EXDATE;TZID=America/Toronto:{}",
-                exdate
-                    .iter()
-                    .map(|d| d
-                        .and_time(date_range.start_time)
-                        .format("%Y%m%dT%H%M%S")
-                        .to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
+            ui.add_space(6.0);
 
-            write!(
-                calendar,
-                indoc! {r#"
-                    BEGIN:VEVENT
-                    DTSTAMP:{dtstamp}
-                    UID:{uid}
-                    DTSTART;{dtstart}
-                    DTEND;{dtend}
-                    RRULE:FREQ=WEEKLY;TZID=America/Toronto;UNTIL={until}
-                    {exdate}
-                    SUMMARY:{name}
-                    DESCRIPTION:Campus: {location}\nCode: {code}\n{crn}\n{instructor}
-                    LOCATION:{building} - {room}
-                    END:VEVENT
-                "#},
-                dtstamp = Utc::now().format("%Y%m%dT%H%M%SZ"),
-                uid = Uuid::new_v4(),
-                dtstart = tzid(first_date.and_time(date_range.start_time)),
-                dtend = tzid(first_date.and_time(date_range.end_time)),
-                until = date_range
-                    .end_date
-                    .and_hms(23, 59, 59)
-                    .format("%Y%m%dT%H%M%S"),
-                exdate = exdate,
-                name = class.name,
-                code = class.code,
-                crn = class.crn,
-                instructor = class.instructor,
-                location = date_range.location,
-                building = date_range.building,
-                room = date_range.room,
-            )
-            .ok();
+            let mut i = 0;
+            self.excluded_dates.retain_mut(|range| {
+                ui.horizontal(|ui| {
+                    let should_delete = ui.button("❌").clicked();
 
-            *class_summary_count += 1;
+                    date_picker(ui, &mut range.start, &format!("{i}_start"));
+
+                    if let Some(end) = &mut range.end {
+                        ui.label("-");
+                        date_picker(ui, end, &format!("{i}_end"));
+                    }
+
+                    i += 1;
+                    !should_delete
+                })
+                .inner
+            });
+        });
+    }
+}
+
+fn date_picker(ui: &mut egui::Ui, selection: &mut NaiveDate, id_source: &str) -> egui::Response {
+    DatePickerButton::new(selection)
+        .id_source(id_source)
+        .calendar_week(false)
+        .show_icon(false)
+        .ui(ui)
+}
+
+#[derive(Debug, Clone)]
+struct ExcludedDate {
+    start: NaiveDate,
+    end: Option<NaiveDate>,
+}
+
+impl ExcludedDate {
+    fn single() -> Self {
+        Self {
+            start: *DEFAULT_DATE,
+            end: None,
         }
     }
 
-    for (name, calendar) in &mut calendars {
-        calendar.push_str("END:VCALENDAR");
-        fold_calendar(calendar);
-        *calendar = calendar.replace('\n', "\r\n");
-        fs::write(format!("{}.ics", name), calendar).ok();
+    fn range() -> Self {
+        Self {
+            start: *DEFAULT_DATE,
+            end: Some(*DEFAULT_DATE),
+        }
     }
-
-    let max_name_len = summary.keys().map(|n| n.len()).max().unwrap();
-    for (name, class_summary) in summary {
-        println!(
-            "{:indent$}{} → {}",
-            "",
-            name,
-            class_summary
-                .iter()
-                .map(|(class_type, count)| format!("{}: {}", class_type, count))
-                .collect::<Vec<String>>()
-                .join(", "),
-            indent = max_name_len - name.len()
-        );
-    }
-    println!("Wrote .ics file(s).");
 }
