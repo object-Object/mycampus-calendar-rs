@@ -1,9 +1,12 @@
 mod parser;
 
+use std::path::PathBuf;
+
 use chrono::{Local, NaiveDate};
-use eframe::egui::{self, CentralPanel, ScrollArea, TextEdit, Widget};
+use eframe::egui::{self, Button, CentralPanel, ScrollArea, TextEdit, Widget};
 use egui_extras::DatePickerButton;
 use once_cell::sync::Lazy;
+use rfd::FileDialog;
 
 static DEFAULT_DATE: Lazy<NaiveDate> = Lazy::new(|| Local::now().date_naive());
 
@@ -19,6 +22,7 @@ fn main() -> eframe::Result {
 struct App {
     data: String,
     excluded_dates: Vec<ExcludedDate>,
+    output_folder: Option<PathBuf>,
 }
 
 impl eframe::App for App {
@@ -73,6 +77,25 @@ impl eframe::App for App {
                 })
                 .inner
             });
+
+            ui.add_space(12.0);
+
+            ui.horizontal(|ui| {
+                if ui.button("Select output folder...").clicked() {
+                    if let Some(path) = FileDialog::new().pick_folder() {
+                        self.output_folder = Some(path);
+                    }
+                }
+
+                if let Some(path) = &self.output_folder {
+                    ui.label(path.display().to_string());
+                }
+            });
+
+            ui.add_space(12.0);
+
+            let enabled = !self.data.is_empty() && self.output_folder.is_some();
+            ui.add_enabled(enabled, Button::new("Generate"));
         });
     }
 }
