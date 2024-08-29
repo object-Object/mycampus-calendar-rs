@@ -13,18 +13,26 @@ const OUTPUT_FOLDER_KEY: &str = "output_folder";
 static DEFAULT_DATE: Lazy<NaiveDate> = Lazy::new(|| Local::now().date_naive());
 
 fn main() -> eframe::Result {
+    let app_name = "mycampus-calendar-rs";
     eframe::run_native(
-        "mycampus-calendar-rs",
+        app_name,
         eframe::NativeOptions::default(),
         Box::new(|cc| {
             let app = match cc.storage {
-                Some(storage) => App {
-                    output_folder: storage
-                        .get_string(OUTPUT_FOLDER_KEY)
-                        .map(|s| s.into())
-                        .take_if(|p: &mut PathBuf| p.is_dir()),
-                    ..Default::default()
-                },
+                Some(storage) => {
+                    println!(
+                        "Saving persistent data to: {}",
+                        eframe::storage_dir(app_name)
+                            .map_or("(unknown)".to_owned(), |p| p.display().to_string())
+                    );
+                    App {
+                        output_folder: storage
+                            .get_string(OUTPUT_FOLDER_KEY)
+                            .map(|s| s.into())
+                            .take_if(|p: &mut PathBuf| p.is_dir()),
+                        ..Default::default()
+                    }
+                }
                 None => App::default(),
             };
             Ok(Box::<App>::new(app))
@@ -115,11 +123,21 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     let should_delete = ui.button("❌").clicked();
 
-                    date_picker(ui, &mut range.start, &format!("{i}_start"));
+                    if date_picker(ui, &mut range.start, &format!("{i}_start")).changed()
+                        && !range.was_changed
+                        && range.end.is_some()
+                    {
+                        range.was_changed = true;
+                        range.end = Some(range.start);
+                    };
 
                     if let Some(end) = &mut range.end {
                         ui.label("-");
-                        date_picker(ui, end, &format!("{i}_end"));
+                        if date_picker(ui, end, &format!("{i}_end")).changed() && !range.was_changed
+                        {
+                            range.was_changed = true;
+                            range.start = *end;
+                        };
                     }
 
                     i += 1;
@@ -187,21 +205,24 @@ fn date_picker(ui: &mut egui::Ui, selection: &mut NaiveDate, id_source: &str) ->
 struct ExcludedDate {
     start: NaiveDate,
     end: Option<NaiveDate>,
+    was_changed: bool,
 }
 
 impl ExcludedDate {
-    fn single() -> Self {
+    fn new(start: NaiveDate, end: Option<NaiveDate>) -> Self {
         Self {
-            start: *DEFAULT_DATE,
-            end: None,
+            start,
+            end,
+            was_changed: false,
         }
     }
 
+    fn single() -> Self {
+        Self::new(*DEFAULT_DATE, None)
+    }
+
     fn range() -> Self {
-        Self {
-            start: *DEFAULT_DATE,
-            end: Some(*DEFAULT_DATE),
-        }
+        Self::new(*DEFAULT_DATE, Some(*DEFAULT_DATE))
     }
 
     fn iter_days(&self) -> impl Iterator<Item = NaiveDate> {
@@ -248,10 +269,10 @@ mod tests {
     }
 
     fn do_test(start: (i32, u32, u32), end: Option<(i32, u32, u32)>, want: Vec<(i32, u32, u32)>) {
-        let input = ExcludedDate {
-            start: NaiveDate::from_ymd_opt(start.0, start.1, start.2).unwrap(),
-            end: end.map(|(y, m, d)| NaiveDate::from_ymd_opt(y, m, d).unwrap()),
-        };
+        let input = ExcludedDate::new(
+            NaiveDate::from_ymd_opt(start.0, start.1, start.2).unwrap(),
+            end.map(|(y, m, d)| NaiveDate::from_ymd_opt(y, m, d).unwrap()),
+        );
 
         let want_dates = want
             .iter()
