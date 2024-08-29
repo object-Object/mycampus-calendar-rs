@@ -3,11 +3,10 @@ use indoc::indoc;
 use phf::phf_map;
 use regex::Regex;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
-    fs,
-    fs::File,
-    io::{prelude::*, BufReader},
+    fs::{self},
+    path::Path,
 };
 use uuid::Uuid;
 
@@ -83,13 +82,9 @@ enum Browser {
     Firefox,
 }
 
-fn load_and_parse_data(filename: &str) -> Vec<Class> {
-    let file =
-        File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
+fn parse_data(raw_data: &str) -> Vec<Class> {
     // wHY ARE THEY USING NO-BREAK SPACES NOW
-    let mut lines = BufReader::new(file)
-        .lines()
-        .map(|l| l.unwrap().replace('\u{a0}', " "));
+    let mut lines = raw_data.lines().map(|l| l.replace('\u{a0}', " "));
 
     // determine what browser was used to generate the data file
     let browser = loop {
@@ -236,39 +231,6 @@ fn load_and_parse_data(filename: &str) -> Vec<Class> {
     output
 }
 
-fn load_and_parse_exdate(filename: &str) -> Vec<NaiveDate> {
-    let file =
-        File::open(filename).unwrap_or_else(|e| panic!("Couldn't open file {}: {}", filename, e));
-    BufReader::new(file)
-        .lines()
-        .flat_map(|l| {
-            let l = l.unwrap();
-            let split = l
-                .split_once(" - ")
-                .unwrap_or_else(|| panic!("Failed to parse exdate line: {}", l));
-
-            let start_date = split
-                .0
-                .parse::<NaiveDate>()
-                .unwrap_or_else(|e| panic!("Failed to parse exdate: {}\n{}", split.0, e));
-
-            let end_date = split
-                .1
-                .parse::<NaiveDate>()
-                .unwrap_or_else(|e| panic!("Failed to parse exdate: {}\n{}", split.1, e));
-
-            let mut dates = Vec::new();
-            for date in start_date.iter_days() {
-                dates.push(date);
-                if date == end_date {
-                    break;
-                }
-            }
-            dates
-        })
-        .collect()
-}
-
 fn tzid(datetime: NaiveDateTime) -> String {
     format!("TZID=America/Toronto:{}", datetime.format("%Y%m%dT%H%M%S"))
 }
@@ -292,9 +254,8 @@ fn fold_calendar(calendar: &mut String) {
     }
 }
 
-fn main() {
-    let data = load_and_parse_data("data.txt");
-    let exdate = load_and_parse_exdate("exdate.txt");
+pub fn generate(output_folder: impl AsRef<Path>, data: &str, exdate: HashSet<NaiveDate>) -> usize {
+    let data = parse_data(data);
 
     println!("Data: {:#?}\nExcluded dates: {:?}", data, exdate);
 
@@ -380,7 +341,8 @@ fn main() {
                 dtend = tzid(first_date.and_time(date_range.end_time)),
                 until = date_range
                     .end_date
-                    .and_hms(23, 59, 59)
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap()
                     .format("%Y%m%dT%H%M%S"),
                 exdate = exdate,
                 name = class.name,
@@ -401,7 +363,10 @@ fn main() {
         calendar.push_str("END:VCALENDAR");
         fold_calendar(calendar);
         *calendar = calendar.replace('\n', "\r\n");
-        fs::write(format!("{}.ics", name), calendar).ok();
+
+        let output_path = output_folder.as_ref().join(format!("{name}.ics"));
+        println!("Writing calendar: {}", output_path.display());
+        fs::write(output_path, calendar).ok();
     }
 
     let max_name_len = summary.keys().map(|n| n.len()).max().unwrap();
@@ -418,5 +383,8 @@ fn main() {
             indent = max_name_len - name.len()
         );
     }
-    println!("Wrote .ics file(s).");
+
+    let n = calendars.len();
+    println!("Wrote {n} .ics file(s).");
+    n
 }
