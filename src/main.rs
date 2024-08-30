@@ -19,20 +19,13 @@ fn main() -> eframe::Result {
         eframe::NativeOptions::default(),
         Box::new(|cc| {
             let app = match cc.storage {
-                Some(storage) => {
-                    println!(
-                        "Saving persistent data to: {}",
-                        eframe::storage_dir(app_name)
-                            .map_or("(unknown)".to_owned(), |p| p.display().to_string())
-                    );
-                    App {
-                        output_folder: storage
-                            .get_string(OUTPUT_FOLDER_KEY)
-                            .map(|s| s.into())
-                            .take_if(|p: &mut PathBuf| p.is_dir()),
-                        ..Default::default()
-                    }
-                }
+                Some(storage) => App {
+                    output_folder: storage
+                        .get_string(OUTPUT_FOLDER_KEY)
+                        .map(|s| s.into())
+                        .take_if(|p: &mut PathBuf| p.is_dir()),
+                    ..Default::default()
+                },
                 None => App::default(),
             };
             Ok(Box::<App>::new(app))
