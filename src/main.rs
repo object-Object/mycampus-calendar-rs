@@ -8,12 +8,15 @@ use egui_extras::DatePickerButton;
 use once_cell::sync::Lazy;
 use rfd::FileDialog;
 
+const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+
 const OUTPUT_FOLDER_KEY: &str = "output_folder";
 
 static DEFAULT_DATE: Lazy<NaiveDate> = Lazy::new(|| Local::now().date_naive());
 
 fn main() -> eframe::Result {
     let app_name = "mycampus-calendar-rs";
+    println!("{app_name} {VERSION}");
     eframe::run_native(
         app_name,
         eframe::NativeOptions::default(),
@@ -73,11 +76,14 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered_justified(|ui| ui.heading("mycampus-calendar-rs"));
+            ui.vertical_centered_justified(|ui| {
+                ui.heading("mycampus-calendar-rs");
+                ui.label(VERSION);
+            });
             ui.separator();
             ui.hyperlink_to(
                 "Usage instructions",
-                "https://github.com/object-Object/mycampus-calendar-rs",
+                format!("https://github.com/object-Object/mycampus-calendar-rs/tree/{VERSION}"),
             );
 
             ui.add_space(12.0);
