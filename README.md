@@ -8,7 +8,7 @@ Download the executable for your OS from [here](https://github.com/object-Object
 
 ## Usage
 
-1. Log in to MyOntarioTech and navigate to the Student Schedule page. Select the current term in the dropdown, then go to the Schedule Details tab. Click all of the arrows beside the course names so they're pointing **down** and the gray boxes are showing.
+1. Open [MyOntarioTech](https://my.ontariotechu.ca/current-students/index.php) and log in to the "Student schedule" page. Select the current term in the dropdown, then go to the Schedule Details tab. Click all of the arrows beside the course names so they're pointing **down** and the gray boxes are showing.
    ![A screenshot of the MyOntarioTech Schedule Details tab in the described state](./img/schedule_details.png)
 2. Press `ctrl + a` then `ctrl + c` to select and copy everything on the page. Don't select it manually or the parsing might not work properly.
 3. Run the program.
