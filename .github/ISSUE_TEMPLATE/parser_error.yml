@@ -4,6 +4,7 @@ body:
   - type: textarea
     attributes:
       label: MyOntarioTech schedule data
+      description: Please paste exactly what you pasted into the app without any changes, so that I can use the data to reproduce the issue.
       render: text
     validations:
       required: true
