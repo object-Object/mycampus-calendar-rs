@@ -84,19 +84,36 @@ enum Browser {
 }
 
 fn parse_data(raw_data: &str) -> Vec<Class> {
+    let course_summary_re = Regex::new(r"^.+?\t([A-Z]{4}) \d{4}U, .+?\t(\d{5})").unwrap();
+    let course_name_re = Regex::new(r"^(.+?) \| (.+?) (\d+U)").unwrap();
+    let date_re = Regex::new(r"^([\d/]+) -- ([\d/]+)(?:\s+(\w+))?").unwrap();
+    let time_re = Regex::new(
+        r"^\s+(\d+:\d+ \w+) - (\d+:\d+ \w+).+?Location: (?P<location>.+?) Building: (?P<building>.+?) Room: (?P<room>.+)",
+    )
+    .unwrap();
+    let message_re = Regex::new(r"\| Schedule Type: (?P<class_type>.+?) \|").unwrap();
+    let crn_re = Regex::new(r"^CRN: (\d{5})").unwrap();
+
     // wHY ARE THEY USING NO-BREAK SPACES NOW
     let mut lines = raw_data.lines().map(|l| l.replace('\u{a0}', " "));
 
-    // determine what browser was used to generate the data file
-    let browser = loop {
-        let next = lines
-            .next()
-            .expect("Failed to find Schedule line to determine browser");
-        match &*next {
-            "Schedule" => break Browser::Chromium,
-            "    Schedule" => break Browser::Firefox,
-            _ => (),
+    let mut crn_short_subjects: HashMap<String, String> = HashMap::new();
+    let browser = 'browser: {
+        for line in lines.by_ref() {
+            // in case long subject names keep changing
+            // also try to get the short code from the summary at the start of the data
+            if let Some(caps) = course_summary_re.captures(&line) {
+                let (_, [short_subject, crn]) = caps.extract();
+                crn_short_subjects.insert(crn.to_owned(), short_subject.to_owned());
+            }
+
+            match &*line {
+                "Schedule" => break 'browser Browser::Chromium,
+                "    Schedule" => break 'browser Browser::Firefox,
+                _ => (),
+            }
         }
+        panic!("Failed to find Schedule line to determine browser")
     };
 
     // skip unneeded prelude
@@ -107,13 +124,6 @@ fn parse_data(raw_data: &str) -> Vec<Class> {
     {}
 
     let mut output = Vec::new();
-    let course_name_re = Regex::new(r"^(.+?) \| (.+?) (\d+U)").unwrap();
-    let date_re = Regex::new(r"^([\d/]+) -- ([\d/]+)(?:\s+(\w+))?").unwrap();
-    let time_re = Regex::new(
-        r"^\s+(\d+:\d+ \w+) - (\d+:\d+ \w+).+?Location: (?P<location>.+?) Building: (?P<building>.+?) Room: (?P<room>.+)",
-    )
-    .unwrap();
-    let message_re = Regex::new(r"\| Schedule Type: (?P<class_type>.+?) \|").unwrap();
 
     while let Some(course_name_line) = lines.next() {
         // handle extra newlines at the end
@@ -127,14 +137,7 @@ fn parse_data(raw_data: &str) -> Vec<Class> {
             .unwrap_or_else(|| panic!("Failed to match course name line: {}", course_name_line));
         let name = course_name_caps.get(1).unwrap().as_str().to_string();
         let subject = course_name_caps.get(2).unwrap().as_str();
-        let code = format!(
-            "{} {}",
-            SUBJECTS.get(subject).unwrap_or_else(|| panic!(
-                "Failed to get short subject code for subject: {}",
-                subject
-            )),
-            course_name_caps.get(3).unwrap().as_str()
-        );
+        let code_number = course_name_caps.get(3).unwrap().as_str();
 
         // skip "Registered" line
         lines.next();
@@ -213,14 +216,27 @@ fn parse_data(raw_data: &str) -> Vec<Class> {
             });
         };
 
-        let crn = lines.next().unwrap();
+        let crn_line = lines.next().unwrap();
+
+        let short_subject = SUBJECTS
+            .get(subject)
+            .map(|s| (*s).to_owned())
+            .or_else(|| {
+                crn_re
+                    .captures(&crn_line)
+                    .and_then(|caps| caps.get(1))
+                    .and_then(|crn| crn_short_subjects.get(crn.as_str()))
+                    .cloned()
+            })
+            .unwrap_or_else(|| panic!("Failed to get short subject code for subject: {}", subject));
+        let code = format!("{short_subject} {code_number}");
 
         output.push(Class {
             name,
             code,
             date_ranges,
             instructor,
-            crn,
+            crn: crn_line,
             class_type: message_caps
                 .name("class_type")
                 .unwrap()
