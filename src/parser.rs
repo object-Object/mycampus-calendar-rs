@@ -48,6 +48,7 @@ static SUBJECTS: phf::Map<&'static str, &'static str> = phf_map! {
     "Radiation Science" => "RADI",
     "Science" => "SCIE",
     "Science Co-op" => "SCCO",
+    "Science Co-op Work Term" => "SCCO",
     "Social Science" => "SSCI",
     "Sociology" => "SOCI",
     "Software Engineering" => "SOFE",
