@@ -1,15 +1,20 @@
 mod parser;
 
-use std::{collections::HashSet, panic, path::PathBuf};
+use std::{collections::HashSet, fs, panic, path::PathBuf};
 
 use chrono::{Local, NaiveDate};
-use eframe::egui::{self, Button, CentralPanel, ScrollArea, TextEdit, Widget};
+use eframe::egui::{
+    self, Button, CentralPanel, Grid, RichText, ScrollArea, TextEdit, TextStyle, Widget,
+};
 use egui_extras::DatePickerButton;
 use once_cell::sync::Lazy;
 use rfd::FileDialog;
 
+use self::parser::Parser;
+
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
+const PARSER_KEY: &str = "parser";
 const OUTPUT_FOLDER_KEY: &str = "output_folder";
 
 static DEFAULT_DATE: Lazy<NaiveDate> = Lazy::new(|| Local::now().date_naive());
@@ -23,6 +28,10 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             let app = match cc.storage {
                 Some(storage) => App {
+                    parser: storage
+                        .get_string(PARSER_KEY)
+                        .and_then(|s| serde_json::from_str(&s).ok())
+                        .unwrap_or_default(),
                     output_folder: storage
                         .get_string(OUTPUT_FOLDER_KEY)
                         .map(|s| s.into())
@@ -38,6 +47,7 @@ fn main() -> eframe::Result {
 
 #[derive(Default)]
 struct App {
+    parser: Parser,
     data: String,
     excluded_dates: Vec<ExcludedDate>,
     output_folder: Option<PathBuf>,
@@ -58,8 +68,9 @@ impl App {
                 .collect::<HashSet<_>>();
 
             // FIXME: this should really return a result instead of catching errors.
-            let result =
-                panic::catch_unwind(|| parser::generate(output_folder, &self.data, exdate));
+            let result = panic::catch_unwind(|| {
+                parser::generate(output_folder, &self.parser, &self.data, exdate)
+            });
 
             self.result_text = Some(match result {
                 Ok(n) if n > 0 => format!("☑ Generated {n} calendar(s)."),
@@ -146,6 +157,70 @@ impl eframe::App for App {
             });
 
             ui.add_space(12.0);
+            ui.collapsing(RichText::new("Advanced").heading(), |ui| {
+                ui.heading("Regexes");
+
+                Grid::new("regexes")
+                    .num_columns(2)
+                    .spacing([40.0, 4.0])
+                    .show(ui, |ui| {
+                        for (label, text) in [
+                            ("Course Summary", &mut self.parser.course_summary_re),
+                            ("Course Name", &mut self.parser.course_name_re),
+                            ("Date", &mut self.parser.date_re),
+                            ("Time", &mut self.parser.time_re),
+                            ("Message", &mut self.parser.message_re),
+                            ("CRN", &mut self.parser.crn_re),
+                        ] {
+                            ui.label(label);
+                            ui.add_sized(
+                                ui.available_size(),
+                                TextEdit::singleline(text).font(TextStyle::Monospace),
+                            );
+                            ui.end_row();
+                        }
+                    });
+
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("Import").clicked() {
+                        if let Some(path) =
+                            FileDialog::new().add_filter("json", &["json"]).pick_file()
+                        {
+                            match fs::read_to_string(path)
+                                .map_err(|e| e.to_string())
+                                .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+                            {
+                                Ok(parser) => self.parser = parser,
+                                Err(err) => self.result_text = Some(err),
+                            }
+                        }
+                    }
+
+                    if ui.button("Export").clicked() {
+                        if let Some(path) = FileDialog::new()
+                            .add_filter("json", &["json"])
+                            .set_file_name("mycampus_regexes.json")
+                            .save_file()
+                        {
+                            if let Err(err) = fs::write(
+                                path,
+                                serde_json::to_string_pretty(&self.parser)
+                                    .expect("Failed to serialize regexes"),
+                            ) {
+                                self.result_text = Some(err.to_string());
+                            }
+                        }
+                    }
+
+                    if ui.button("Reset (double-click)").double_clicked() {
+                        self.parser = Parser::default();
+                    }
+                });
+            });
+
+            ui.add_space(12.0);
             ui.heading("Output");
 
             ui.horizontal(|ui| {
@@ -181,6 +256,10 @@ impl eframe::App for App {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if let Ok(parser) = serde_json::to_string(&self.parser) {
+            storage.set_string(PARSER_KEY, parser);
+        }
+
         if let Some(output_folder) = self
             .output_folder
             .as_ref()

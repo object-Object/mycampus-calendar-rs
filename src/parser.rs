@@ -2,6 +2,7 @@ use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc, Weekd
 use indoc::indoc;
 use phf::phf_map;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
@@ -83,169 +84,200 @@ enum Browser {
     Firefox,
 }
 
-fn parse_data(raw_data: &str) -> Vec<Class> {
-    let course_summary_re = Regex::new(r"^.+?\t([A-Z]{4}) \d{4}U, .+?\t(\d{5})").unwrap();
-    let course_name_re = Regex::new(r"^(.+?) \| (.+?) (\d+U)").unwrap();
-    let date_re = Regex::new(r"^([\d/]+) -- ([\d/]+)(?:\s+(\w+))?").unwrap();
-    let time_re = Regex::new(
-        r"^\s+(\d+:\d+ \w+) - (\d+:\d+ \w+).+?Location: (?P<location>.+?) Building: (?P<building>.+?) Room: (?P<room>.+)",
-    )
-    .unwrap();
-    let message_re = Regex::new(r"\| Schedule Type: (?P<class_type>.+?) \|").unwrap();
-    let crn_re = Regex::new(r"^CRN: (\d{5})").unwrap();
+#[derive(Serialize, Deserialize)]
+pub struct Parser {
+    pub course_summary_re: String,
+    pub course_name_re: String,
+    pub date_re: String,
+    pub time_re: String,
+    pub message_re: String,
+    pub crn_re: String,
+}
 
-    // wHY ARE THEY USING NO-BREAK SPACES NOW
-    let mut lines = raw_data.lines().map(|l| l.replace('\u{a0}', " "));
-
-    let mut crn_short_subjects: HashMap<String, String> = HashMap::new();
-    let browser = 'browser: {
-        for line in lines.by_ref() {
-            // in case long subject names keep changing
-            // also try to get the short code from the summary at the start of the data
-            if let Some(caps) = course_summary_re.captures(&line) {
-                let (_, [short_subject, crn]) = caps.extract();
-                crn_short_subjects.insert(crn.to_owned(), short_subject.to_owned());
-            }
-
-            match &*line {
-                "Schedule" => break 'browser Browser::Chromium,
-                "    Schedule" => break 'browser Browser::Firefox,
-                _ => (),
-            }
+impl Default for Parser {
+    fn default() -> Self {
+        Self {
+            course_summary_re: r"^.+?\t(?<subject>[A-Z]{4}) \d{4}U, .+?\t(?<crn>\d{5})".to_string(),
+            course_name_re: r"^(?<name>.+?) \| (?<subject>.+?) (?<code>\d+U)".to_string(),
+            date_re: r"^(?<start>[\d/]+) -- (?<end>[\d/]+)(?:\s+(?<weekday>\w+))?".to_string(),
+            time_re: r"^\s+(?<start>\d+:\d+ \w+) - (?<end>\d+:\d+ \w+).+?Location: (?<location>.+?) Building: (?<building>.+?) Room: (?<room>.+)".to_string(),
+            message_re: r"\| Schedule Type: (?<class_type>.+?) \|".to_string(),
+            crn_re: r"^CRN: (?<crn>\d{5})".to_string(),
         }
-        panic!("Failed to find Schedule line to determine browser")
-    };
+    }
+}
 
-    // skip unneeded prelude
-    while !lines
-        .next()
-        .expect("Failed to find start of schedule")
-        .starts_with("Class Schedule for ")
-    {}
+impl Parser {
+    fn parse_data(&self, raw_data: &str) -> Vec<Class> {
+        let course_summary_re = Regex::new(&self.course_summary_re).unwrap();
+        let course_name_re = Regex::new(&self.course_name_re).unwrap();
+        let date_re = Regex::new(&self.date_re).unwrap();
+        let time_re = Regex::new(&self.time_re).unwrap();
+        let message_re = Regex::new(&self.message_re).unwrap();
+        let crn_re = Regex::new(&self.crn_re).unwrap();
 
-    let mut output = Vec::new();
+        // wHY ARE THEY USING NO-BREAK SPACES NOW
+        let mut lines = raw_data.lines().map(|l| l.replace('\u{a0}', " "));
 
-    while let Some(course_name_line) = lines.next() {
-        // handle extra newlines at the end
-        if course_name_line.is_empty() {
-            break;
-        }
+        let mut crn_short_subjects: HashMap<String, String> = HashMap::new();
+        let browser = 'browser: {
+            for line in lines.by_ref() {
+                // in case long subject names keep changing
+                // also try to get the short code from the summary at the start of the data
+                if let Some(caps) = course_summary_re.captures(&line) {
+                    let short_subject = caps.name("subject").unwrap().as_str();
+                    let crn = caps.name("crn").unwrap().as_str();
+                    crn_short_subjects.insert(crn.to_owned(), short_subject.to_owned());
+                }
 
-        // parse course name and code
-        let course_name_caps = course_name_re
-            .captures(&course_name_line)
-            .unwrap_or_else(|| panic!("Failed to match course name line: {}", course_name_line));
-        let name = course_name_caps.get(1).unwrap().as_str().to_string();
-        let subject = course_name_caps.get(2).unwrap().as_str();
-        let code_number = course_name_caps.get(3).unwrap().as_str();
-
-        // skip "Registered" line
-        lines.next();
-
-        // why did they CHANGE THE FORMAT
-        // JUST TO MOVE THIS BOX TO THE TOP
-        let message_line = lines.next().unwrap();
-        let message_caps = message_re
-            .captures(&message_line)
-            .unwrap_or_else(|| panic!("Failed to parse message line: {}", message_line));
-
-        // parse date ranges
-        let mut date_ranges = Vec::new();
-        let instructor = loop {
-            let date_line = lines.next().unwrap();
-            let date_caps = match date_re.captures(&date_line) {
-                Some(caps) => caps,
-                None => break date_line,
-            };
-
-            let start_date = date_caps.get(1).unwrap().as_str();
-            let start_date = NaiveDate::parse_from_str(start_date, "%m/%d/%Y")
-                .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", start_date, e));
-
-            let end_date = date_caps.get(2).unwrap().as_str();
-            let end_date = NaiveDate::parse_from_str(end_date, "%m/%d/%Y")
-                .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", end_date, e));
-
-            let weekday = match browser {
-                Browser::Firefox => lines.next().unwrap(),
-                Browser::Chromium => date_caps.get(3).unwrap().as_str().to_string(),
-            };
-            if weekday == "None" {
-                lines.nth(match browser {
-                    Browser::Chromium => 7,
-                    Browser::Firefox => 9,
-                });
-                continue;
+                match &*line {
+                    "Schedule" => break 'browser Browser::Chromium,
+                    "    Schedule" => break 'browser Browser::Firefox,
+                    _ => (),
+                }
             }
-            let weekday = weekday
-                .parse::<Weekday>()
-                .unwrap_or_else(|_| panic!("Failed to parse weekday: {}", weekday));
-
-            // skip day abbreviations
-            lines.nth(match browser {
-                Browser::Chromium => 6,
-                Browser::Firefox => 8,
-            });
-
-            let time_line = lines.next().unwrap();
-            let time_caps = time_re
-                .captures(&time_line)
-                .unwrap_or_else(|| panic!("Failed to parse time line: {}", time_line));
-
-            let start_time = time_caps.get(1).unwrap().as_str();
-            let start_time = NaiveTime::parse_from_str(start_time, "%I:%M %p")
-                .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", start_time, e));
-
-            let end_time = time_caps.get(2).unwrap().as_str();
-            let end_time = NaiveTime::parse_from_str(end_time, "%I:%M %p")
-                .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", end_time, e));
-
-            let location = time_caps.name("location").unwrap().as_str().to_string();
-            let building = time_caps.name("building").unwrap().as_str().to_string();
-            let room = time_caps.name("room").unwrap().as_str().to_string();
-
-            date_ranges.push(DateRange {
-                start_date,
-                end_date,
-                start_time,
-                end_time,
-                weekday,
-                location,
-                building,
-                room,
-            });
+            panic!("Failed to find Schedule line to determine browser")
         };
 
-        let crn_line = lines.next().unwrap();
+        // skip unneeded prelude
+        while !lines
+            .next()
+            .expect("Failed to find start of schedule")
+            .starts_with("Class Schedule for ")
+        {}
 
-        let short_subject = SUBJECTS
-            .get(subject)
-            .map(|s| (*s).to_owned())
-            .or_else(|| {
-                crn_re
-                    .captures(&crn_line)
-                    .and_then(|caps| caps.get(1))
-                    .and_then(|crn| crn_short_subjects.get(crn.as_str()))
-                    .cloned()
+        let mut output = Vec::new();
+
+        while let Some(course_name_line) = lines.next() {
+            // handle extra newlines at the end
+            if course_name_line.is_empty() {
+                break;
+            }
+
+            // parse course name and code
+            let course_name_caps =
+                course_name_re
+                    .captures(&course_name_line)
+                    .unwrap_or_else(|| {
+                        panic!("Failed to match course name line: {}", course_name_line)
+                    });
+            let name = course_name_caps.name("name").unwrap().as_str().to_string();
+            let subject = course_name_caps.name("subject").unwrap().as_str();
+            let code_number = course_name_caps.name("code").unwrap().as_str();
+
+            // skip "Registered" line
+            lines.next();
+
+            // why did they CHANGE THE FORMAT
+            // JUST TO MOVE THIS BOX TO THE TOP
+            let message_line = lines.next().unwrap();
+            let message_caps = message_re
+                .captures(&message_line)
+                .unwrap_or_else(|| panic!("Failed to parse message line: {}", message_line));
+
+            // parse date ranges
+            let mut date_ranges = Vec::new();
+            let instructor = loop {
+                let date_line = lines.next().unwrap();
+                let date_caps = match date_re.captures(&date_line) {
+                    Some(caps) => caps,
+                    None => break date_line,
+                };
+
+                let start_date = date_caps.name("start").unwrap().as_str();
+                let start_date = NaiveDate::parse_from_str(start_date, "%m/%d/%Y")
+                    .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", start_date, e));
+
+                let end_date = date_caps.name("end").unwrap().as_str();
+                let end_date = NaiveDate::parse_from_str(end_date, "%m/%d/%Y")
+                    .unwrap_or_else(|e| panic!("Failed to parse date: {}\n{}", end_date, e));
+
+                let weekday = match browser {
+                    Browser::Firefox => lines.next().unwrap(),
+                    Browser::Chromium => date_caps.name("weekday").unwrap().as_str().to_string(),
+                };
+                if weekday == "None" {
+                    lines.nth(match browser {
+                        Browser::Chromium => 7,
+                        Browser::Firefox => 9,
+                    });
+                    continue;
+                }
+                let weekday = weekday
+                    .parse::<Weekday>()
+                    .unwrap_or_else(|_| panic!("Failed to parse weekday: {}", weekday));
+
+                // skip day abbreviations
+                lines.nth(match browser {
+                    Browser::Chromium => 6,
+                    Browser::Firefox => 8,
+                });
+
+                let time_line = lines.next().unwrap();
+                let time_caps = time_re
+                    .captures(&time_line)
+                    .unwrap_or_else(|| panic!("Failed to parse time line: {}", time_line));
+
+                let start_time = time_caps.name("start").unwrap().as_str();
+                let start_time = NaiveTime::parse_from_str(start_time, "%I:%M %p")
+                    .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", start_time, e));
+
+                let end_time = time_caps.name("end").unwrap().as_str();
+                let end_time = NaiveTime::parse_from_str(end_time, "%I:%M %p")
+                    .unwrap_or_else(|e| panic!("Failed to parse time: {}\n{}", end_time, e));
+
+                let location = time_caps.name("location").unwrap().as_str().to_string();
+                let building = time_caps.name("building").unwrap().as_str().to_string();
+                let room = time_caps.name("room").unwrap().as_str().to_string();
+
+                date_ranges.push(DateRange {
+                    start_date,
+                    end_date,
+                    start_time,
+                    end_time,
+                    weekday,
+                    location,
+                    building,
+                    room,
+                });
+            };
+
+            let crn_line = lines.next().unwrap();
+
+            let short_subject = SUBJECTS
+                .get(subject)
+                .map(|s| (*s).to_owned())
+                .or_else(|| {
+                    crn_re
+                        .captures(&crn_line)
+                        .and_then(|caps| caps.name("crn"))
+                        .and_then(|crn| crn_short_subjects.get(crn.as_str()))
+                        .cloned()
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Failed to get short subject code for subject: {}\nFound subjects: {:#?}",
+                        subject, crn_short_subjects
+                    )
+                });
+            let code = format!("{short_subject} {code_number}");
+
+            output.push(Class {
+                name,
+                code,
+                date_ranges,
+                instructor,
+                crn: crn_line,
+                class_type: message_caps
+                    .name("class_type")
+                    .unwrap()
+                    .as_str()
+                    .to_string(),
             })
-            .unwrap_or_else(|| panic!("Failed to get short subject code for subject: {}", subject));
-        let code = format!("{short_subject} {code_number}");
+        }
 
-        output.push(Class {
-            name,
-            code,
-            date_ranges,
-            instructor,
-            crn: crn_line,
-            class_type: message_caps
-                .name("class_type")
-                .unwrap()
-                .as_str()
-                .to_string(),
-        })
+        output
     }
-
-    output
 }
 
 fn tzid(datetime: NaiveDateTime) -> String {
@@ -271,8 +303,13 @@ fn fold_calendar(calendar: &mut String) {
     }
 }
 
-pub fn generate(output_folder: impl AsRef<Path>, data: &str, exdate: HashSet<NaiveDate>) -> usize {
-    let data = parse_data(data);
+pub fn generate(
+    output_folder: impl AsRef<Path>,
+    parser: &Parser,
+    data: &str,
+    exdate: HashSet<NaiveDate>,
+) -> usize {
+    let data = parser.parse_data(data);
 
     println!("Data: {:#?}\nExcluded dates: {:?}", data, exdate);
 
