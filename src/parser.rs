@@ -418,7 +418,13 @@ pub fn generate(
         fold_calendar(calendar);
         *calendar = calendar.replace('\n', "\r\n");
 
-        let output_path = output_folder.as_ref().join(format!("{name}.ics"));
+        let output_path = output_folder.as_ref().join(format!(
+            "{}.ics",
+            name.replace(
+                ['/', '\\', '<', '>', ':', '"', '\'', '|', '?', '*', ' ', '\r', '\n', '\0'],
+                "_"
+            )
+        ));
         println!("Writing calendar: {}", output_path.display());
         fs::write(output_path, calendar).ok();
     }
