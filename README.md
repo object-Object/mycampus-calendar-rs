@@ -2,6 +2,8 @@
 
 This is a small program to parse student schedules from MyOntarioTech (formerly MyCampus) into `.ics` files, which can be imported into any calendar app (eg. Google Calendar, Outlook, Apple Calendar). The parser is still working as of Fall 2024. Works with Firefox and (probably) any Chromium-based browser.
 
+This program should also theoretically work with any university/college that uses Ellucian Banner for course scheduling, though you may have to mess around with the parser regexes (in the Advanced section) to get it to work.
+
 ## Installation
 
 Download the executable for your OS from [here](https://github.com/object-Object/mycampus-calendar-rs/releases), or clone this repo and build from source.
