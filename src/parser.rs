@@ -150,7 +150,7 @@ impl Parser {
 
         while let Some(course_name_line) = lines.next() {
             // handle extra newlines at the end
-            if course_name_line.is_empty() {
+            if course_name_line.is_empty() || course_name_line.starts_with('©') {
                 break;
             }
 
@@ -242,7 +242,14 @@ impl Parser {
                 });
             };
 
-            let crn_line = lines.next().unwrap();
+            let crn_line = loop {
+                let line = lines.next().unwrap_or_else(|| {
+                    panic!("Failed to find CRN line after instructor: {instructor}")
+                });
+                if crn_re.is_match(&line) {
+                    break line;
+                }
+            };
 
             let short_subject = SUBJECTS
                 .get(subject)
